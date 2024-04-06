@@ -75,55 +75,6 @@ class NoteSequence:
 
 		return out
 
-		#refactored above
-		'''
-		messages = []
-		on = 0
-		off = 0
-		onList = sorted(self.seq, key=lambda s: s['start'])
-		offList = sorted(self.seq, key=lambda s: s['end'])
-
-		prevTime = min(onList[0]['start'],offList[0]['end'])
-
-		while (on < len(onList)) or (off < len(offList)):
-			#input(f"{on} {off} {len(onList)} {len(offList)}")
-
-			haveOn = (on < len(onList))
-			haveOff = (off < len(offList))
-
-			dTime = 0
-			
-			if haveOn:
-				currOn = onList[on]
-			if haveOff:
-				currOff = offList[off]
-
-			#step through starts and ends of notes, going in chron. order
-			#DO NOTE_OFF EVENTS FIRST WHEN TIMES ARE EQUAL
-			#if(haveOn and (not haveOff or (currOn['start'] < currOff['end']))):
-			if (haveOn and (currOn['start'] < currOff['end'])):
-				dTime = currOn['start'] - prevTime
-				prevTime = currOn['start']
-
-				m = mido.Message('note_on', channel=currOn['ch'], \
-					note=currOn['pitch'], velocity=currOn['vol'], time=dTime)
-
-				messages.append(m)
-				on += 1
-
-			else:
-				dTime = currOff['end'] - prevTime
-				prevTime = currOff['end']
-
-				m = mido.Message('note_off', channel=currOff['ch'], \
-					note=currOff['pitch'], velocity=currOff['vol'], time=dTime)
-
-				messages.append(m)
-				off += 1
-
-		return messages
-		'''
-
 
 
 def binToKingWen(binaryRepr):
@@ -197,7 +148,6 @@ def randomHexagram():
 	#generates a random Hexagram according to standard divination probabilities
 	#also tracks which lines are changing
 	changes = 0
-#	nChanges = 0
 	hexagram = 0
 	
 	for n in range(6):
@@ -207,10 +157,8 @@ def randomHexagram():
 		
 		if(line == 0 and changeRoll < 0.125):
 			changes += 1 << n
-#			nChanges += 1
 		elif(line == 1 and changeRoll < 0.375):
 			changes += 1 << n
-#			nChanges += 1
 
 	return makeHexagram(hexagram, changes)
 
@@ -293,12 +241,8 @@ def generateNote(cNote):
 	if(nArt != 0):
 		cNote['cArt'] = nArt
 
-#	print(f"  {uHexagram(hexSequence[0])}  Articulation: {cNote['cArt']}")
-
 	#generate the new note if we're not resting
 	if(cNote['cArt'] != Articulations.REST):
-#		print(f"     PREVIOUS PITCH: {cNote['cP']:0>3}, VOLUME: {cNote['cV']:0>3}")
-
 		hexSequence.append(randomHexagram())
 		hexSequence.append(randomHexagram())
 		cNote['cP'] += changePitch(hexSequence[-2])
@@ -306,9 +250,6 @@ def generateNote(cNote):
 
 		cNote['cP'] = min(max(0,cNote['cP']),127)
 		cNote['cV'] = min(max(minVol,cNote['cV']),127)
-
-#		print(f"  {uHexagram(hexSequence[-2])}  {hexSequence[-2]['hexagram']:0>3} NEW PITCH: {cNote['cP']:0>3}")
-#		print(f"  {uHexagram(hexSequence[-1])}  {hexSequence[-1]['hexagram']:0>3} NEW VOLUME: {cNote['cV']:0>3}")
 
 	return hexSequence
 	
@@ -330,56 +271,37 @@ def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
 	changesRequired = 4
 
 	cNote = {'cP':0,'cV':0,'cArt':Articulations.NORMAL,'cSt':0}
-	#cArt = Articulations.NORMAL
 	pedNotes = [] #keep track of which notes are played w/ pedal
-	
-	'''
-	#... and variables for the current note
-	cPitch = 0
-	cVolume = 0
-	cStart = 0
-	'''
 
-	#start our initial note; init. pitch & vol := random.randrange(64) + 1
+	#start our initial note; init. pitch & vol := 29 + random.randrange(64)
+	#which gives a uniform distribution from F1 to G#4 centered on middle C
 	for i in range(2):
 		hexSequence.append(randomHexagram())
+
 	cNote['cP'] = 29 + hexSequence[0]['hexagram']
 	cNote['cV'] = 29 + hexSequence[1]['hexagram']
 
-#	print(f"Song Length: {maxTime}, Max Number of Notes: {maxNotes}, Channel: {channel:0>2}, Program: {voice:0>3}\n")
-#	print(f"0000 NEW NOTE")
-#	print(f"  Init Pitch: {cNote['cP']:0>3}, 29 + {uHexagram(hexSequence[0])}  | Init Volume: {cNote['cV']:0>3}, 29 + {uHexagram(hexSequence[1])}\n")
-
 	while((songCounter <= maxTime) or (maxNotes > 0)):
-#		print(f"{songCounter:0>4} {('CONTINUE NOTE','NEW NOTE')[genNewNote]}")
-
 
 		if(not genNewNote):
 			chHex = randomHexagram()
 
-#			print(f"  {uHexagram(chHex)}  CHANGES: {chHex['changes']:0>6b}")
-
 			#roll to see if we end the current note
 			if(chHex['numChanges'] >= changesRequired):
-#				print(f"  ---END NOTE---")
-
 				genNewNote = True
 
 				cEnd = timeEndNote(cNote['cSt'], songCounter, cNote['cArt'])
 				
 				if (cNote['cArt'] == Articulations.PEDAL):
-#					print(f"     ADD PEDAL NOTE")
 					pedNotes.append({'p':cNote['cP'], 'v':cNote['cV'], \
 									 'st':cNote['cSt']})
 				elif(cNote['cArt'] != Articulations.REST):
-#					print(f"     ADD NOTE")
 					seq.addNote(cNote['cP'], cNote['cV'], cNote['cSt'], \
 								cEnd, channel)
 
 				if(cNote['cArt'] != Articulations.REST):
 					maxNotes -= 1
-#					print(f"  PITCH: {cNote['cP']:0>3}, VOLUME: {cNote['cV']:0>3}, START: {cNote['cSt']}, END: {cEnd}, ART: {cNote['cArt']}")
-#					print(f"  REMAINING NOTES: {maxNotes}, REMAINING TIME: {maxTime-songCounter}")
+
 				else:
 					#reset articulation to normal after a rest
 					cNote['cArt'] = Articulations.NORMAL
@@ -389,12 +311,9 @@ def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
 
 		#break if we ran out of notes or time
 		if(maxNotes <= 0 and (songCounter > (maxTime - 1))):
-#			print("\n***BREAK***")
 			break
 
 		if genNewNote:
-#			print(f"\n{songCounter:0>4} NEW NOTE")
-
 			genNewNote = False
 			prevArt = cNote['cArt']
 
@@ -402,8 +321,6 @@ def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
 
 			#if we let go of pedal, end all pedal notes now and clear list
 			if(prevArt == Articulations.PEDAL and prevArt != cNote['cArt']):
-#				print(f"  REMOVE PEDAL, PEDAL NOTES: {pedNotes}")
-
 				for note in pedNotes:
 					seq.addNote(note['p'], note['v'], note['st'], songCounter)
 				pedNotes = []
@@ -411,28 +328,21 @@ def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
 			#if same pitch is in pedal notes, end matching note and remove
 			#there should be AT MOST one copy of any single pitch in pedNotes
 			if(len(pedNotes) > 0):
-#				print(f"  PEDAL NOTES: {pedNotes}")
-
 				i = 0
 				while i < len(pedNotes):
 					n = pedNotes[i]
 					if(n['p'] == cNote['cP']):
-#						print(f"  PEDAL MATCH @ INDEX: {i}")
 
 						seq.addNote(n['p'], n['v'], n['st'], songCounter)
 						pedNotes.pop(i)
 
-#						print(f"  REMAINING PEDAL NOTES: {pedNotes}")
 						break
 					i += 1
 
 		songCounter += 1
-		#input('')
-	
-	#print(pedNotes)	
+		
 	#clean up last note, if necessary
 	if (not genNewNote):
-#		print('\ncleaning up...')
 		seq.addNote(cNote['cP'],cNote['cV'],cNote['cSt'],songCounter,channel)
 
 	#clean up any remaining pedal notes
@@ -451,7 +361,7 @@ def main():
 	length = 8
 	voices = [0, 0]
 	tpq = 12 #ticks per quarter note. 1 quarter note = 0.5s (@120bpm)
-		#time per tick (seconds) = 1m/120b*60s/1m*1b/tpq = 1/(2*tpq) sec
+			 #time per tick (seconds) = 1m/120b*60s/1m*1b/tpq = 1/(2*tpq) sec
 
 	#housekeeping
 	random.seed(seed)
@@ -464,15 +374,10 @@ def main():
 
 	for j in range(len(voices)):
 		generateVoice(rawNotes, maxNotes = length, channel=j, voice=voices[j])
-		#for k in rawNotes.seq:
-		#	print(k)
 
 	messages = rawNotes.generateMessages()
 
-#	print("\nGenerated messages:")
-
 	for m in messages:
-		print(m)
 		song.append(m)
 
 	fileN = f"{version}_{seed}_{tpq}_{length}"
@@ -482,32 +387,6 @@ def main():
 
 	print(f"\nSaving to: {fileN}")
 	output.save(filename = fileN)
-
-	'''
-	n = NoteSequence()
-	n.addNote(63, 63, 0, 28)
-	n.addNote(63, 127, 24, 48)
-	nS = n.generateMessages()
-	print(nS)
-
-	for i in nS:
-		song.append(i)
-	'''
-
-	'''
-	for i in range(1,65):
-		print(i,kingWenToBin(i),binToKingWen(kingWenToBin(i)))
-
-	'''
-	'''
-	song.append(mido.Message('note_on',channel=0,note=64,velocity=127,time=0))
-	song.append(mido.Message('program_change',channel=0,program=71))
-	song.append(mido.Message('note_on',channel=0,note=64,velocity=127,time=12))
-	song.append(mido.Message('note_off',channel=0,note=64,time=12))
-	song.append(mido.Message('note_off',channel=0,note=64,time=12))
-#	midiFilename = repr(seed) + ".mid"
-	output.save(filename = "out.mid")
-	'''
 
 	return 0
 
