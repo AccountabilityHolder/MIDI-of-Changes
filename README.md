@@ -8,6 +8,10 @@ Install Python 3 and pip via the apt package manager using the following in the 
 ```
 sudo apt-get install python3-pip
 ```
+Install mido via pip using the following command
+```
+pip install mido
+```
 
 ## Usage
 To run MIDI of Changes, use the following command in the directory containing the script
