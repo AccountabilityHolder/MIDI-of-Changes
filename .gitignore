@@ -1,0 +1,18 @@
+# MIDI files
+*.mid
+
+#scratchpads
+*.csv
+
+#compiled files
+*.pyc
+
+#os files
+__*
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
