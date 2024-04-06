@@ -444,7 +444,7 @@ def setupParser():
 		''')
 	p.add_argument('-p', '--program', nargs='+', type=int, default=[1], \
 		help='''\
-		int(s): takes up to 16 integers specifying the MIDI program to use 
+		int(s): takes up to 15 integers specifying the MIDI program to use 
 		for each channel. min:1, max:128, default: 1\
 		''')
 
@@ -459,10 +459,10 @@ def validateArgs(args):
 		raise ValueError(f'{prog}: error: argument -l/--length: out of range \
 value: {args.length} (choose a number greater than zero)')
 
-	if(len(args.program) > 16):
+	if(len(args.program) > 15):
 		raise ValueError(f'{prog}: error: argument -p/--program: too many \
 programs specified: {args.program} (argument takes no more \
-than 16 values)')
+than 15 values)')
 
 	for p in range(len(args.program)):
 		if (args.program[p] < 1 or args.program[p] > 128):
@@ -530,15 +530,26 @@ def main():
 
 
 	#setup variables and housekeeping
-	version = '1.0.0'
+	version = '1.0.1'
 	usedHexagrams = []
 	output = mido.MidiFile(type = 0,ticks_per_beat=tpq)
 	song = output.add_track()
 	rawNotes = NoteSequence()
 
-	for i in range(len(voices)):
-		song.append(mido.Message('program_change',channel=i,program=voices[i]))
+	#skip channel 9. it only does percussion
+	if(len(voices) >= 10):
+		loopRange = list(range(9))+list(range(10,len(voices)+1))
+	else:
+		loopRange = range(len(voices))
 
+	for i in loopRange:
+		if i > 8:
+			v = voices[i-1]
+		else:
+			v = voices[i]
+		song.append(mido.Message('program_change',channel=i,program=v))
+
+	
 	if mNotes > 0:
 		print(f'Generating a song with {len(voices)} voices \
 for {mNotes} note(s)...')
@@ -546,10 +557,14 @@ for {mNotes} note(s)...')
 		print(f'Generating a song with {len(voices)} voices \
 for {int(length/2/tpq)} second(s)...')
 
-
-	for j in range(len(voices)):
+	#skip channel 9
+	for j in loopRange:
+		if j > 8:
+			v = voices[j-1]
+		else:
+			v = voices[j]
 		usedHexagrams.extend(generateVoice(rawNotes, maxTime = length, \
-			maxNotes = mNotes, channel=j, voice=voices[j]))
+			maxNotes = mNotes, channel=j, voice=v))
 
 	print(f'\nWriting file...')
 	midiMessages = rawNotes.generateMessages()
