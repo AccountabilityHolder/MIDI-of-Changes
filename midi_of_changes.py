@@ -1,7 +1,9 @@
 import mido
+from tqdm import tqdm
 import argparse
 import sys
 import operator
+import os
 import random
 import math
 from enum import Enum, IntEnum
@@ -15,7 +17,8 @@ class MsgPriority(IntEnum):
 class NoteSequence:
 	def __init__(self):
 		self.seq = []
-		#self.channels = channels
+		
+		return None
 
 
 
@@ -27,6 +30,8 @@ class NoteSequence:
 		#ASSERT 0 <= channel <= 15
 		note={'start':start,'end':end,'pitch':pitch,'vol':volume,'ch':channel}
 		self.seq.append(note)
+
+		return None
 	
 
 	@staticmethod
@@ -53,25 +58,42 @@ class NoteSequence:
 		#notes given to this object. List is sorted for directly adding to a
 		#midi track, assuming NoteSequence holds all notes in a track
 		
+		#mido/midi cannot handle delta times greater than this
+		maxDeltaTime = 268435455
+		
 		messages = []
 		out = []
 
-		for i in self.seq:
-			#skip 0-length notes
-			if(i['start'] != i['end']):
-				messages.extend(NoteSequence._makeAbsTimeMessage(i))
+		with tqdm(total=len(self.seq),desc='Converting') as pbar:
+			for i in self.seq:
+				#skip 0-length notes
+				if(i['start'] != i['end']):
+					messages.extend(NoteSequence._makeAbsTimeMessage(i))
+
+				#throw error if delta time is too high
+				if((i['end'] - i['start']) > maxDeltaTime):
+					raise ValueError(f"Delta time for message {i} is greater \
+than maximum delta time allowable by MIDI 1.0 Standards: \
+{i['end']-i['start']} < {maxDeltaTime}")
+
+				pbar.update(1)
+
+
 
 		messages.sort(key=operator.itemgetter('absTime','priority'))
 		prevTime = 0
 
-		for a in messages:
-			d = a['data']
-			dTime = a['absTime'] - prevTime
-			prevTime = a['absTime']
+		with tqdm(total=len(messages),desc='Writing   ') as pbar:
+			for a in messages:
+				d = a['data']
+				dTime = a['absTime'] - prevTime
+				prevTime = a['absTime']
 
-			m = mido.Message(a['message'],channel=d['c'],note=d['n'],\
+				m = mido.Message(a['message'],channel=d['c'],note=d['n'],\
 							 velocity=d['v'],time=dTime)
-			out.append(m)
+				out.append(m)
+
+				pbar.update(1)
 
 		return out
 
@@ -252,42 +274,35 @@ def generateNote(cNote):
 		cNote['cV'] = min(max(minVol,cNote['cV']),127)
 
 	return hexSequence
-	
 
 
-def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
-	#ASSERT isinstance(seq, NoteSequence())
-	#ASSERT (maxTime + maxNotes > 0) and (maxTime == 0 xor maxNotes == 0)
-	#ASSERT 0 <= channel <= 15
-	#ASSERT 0 <= voice <= 127
-	#generates notes and writes to seq for given channel and MIDI program
-	#generates until written maxNotes-many notes or elapse maxTime-many ticks
-	#returns sequence of (meaningful) hexagrams used to generate sequence
-	
+
+def _generateNotes(pbar, seq, hexs, cNote, maxTime=0, maxNotes=0, channel=0,\
+				   voice=0):
 	#needed general variables...
-	hexSequence = []
 	songCounter = 1
 	genNewNote = False
 	changesRequired = 4
-
-	cNote = {'cP':0,'cV':0,'cArt':Articulations.NORMAL,'cSt':0}
+	
 	pedNotes = [] #keep track of which notes are played w/ pedal
 
-	#start our initial note; init. pitch & vol := 29 + random.randrange(64)
-	#which gives a uniform distribution from F1 to G#4 centered on middle C
-	for i in range(2):
-		hexSequence.append(randomHexagram())
+	#mido/midi cannot handle delta times greater than this
+	maxDeltaTime = 268435455
 
-	cNote['cP'] = 29 + hexSequence[0]['hexagram']
-	cNote['cV'] = 29 + hexSequence[1]['hexagram']
+	usingTime = (maxTime > 0)
+	prevNotes = maxNotes
 
 	while((songCounter <= maxTime) or (maxNotes > 0)):
 
 		if(not genNewNote):
 			chHex = randomHexagram()
 
+			#end note immediately if we reach the longest note possible in midi
+			#this is certainly impossible to occur as it's (2^28 - 1) ticks
+			abort = (songCounter - cNote['cSt']) >= maxDeltaTime
+
 			#roll to see if we end the current note
-			if(chHex['numChanges'] >= changesRequired):
+			if(chHex['numChanges'] >= changesRequired or abort):
 				genNewNote = True
 
 				cEnd = timeEndNote(cNote['cSt'], songCounter, cNote['cArt'])
@@ -317,7 +332,7 @@ def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
 			genNewNote = False
 			prevArt = cNote['cArt']
 
-			hexSequence.append(generateNote(cNote))
+			hexs.append(generateNote(cNote))
 
 			#if we let go of pedal, end all pedal notes now and clear list
 			if(prevArt == Articulations.PEDAL and prevArt != cNote['cArt']):
@@ -339,8 +354,19 @@ def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
 						break
 					i += 1
 
+		#progress bar handling
+		#updates depending on whether generating for [x] notes or [x] ticks
+		if(usingTime):
+			pbar.update(1)
+		elif(prevNotes != maxNotes):
+			pbar.update(1)
+			prevNotes = maxNotes
+
 		songCounter += 1
-		
+
+	#last update
+	pbar.update(1)
+
 	#clean up last note, if necessary
 	if (not genNewNote):
 		seq.addNote(cNote['cP'],cNote['cV'],cNote['cSt'],songCounter,channel)
@@ -348,23 +374,164 @@ def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
 	#clean up any remaining pedal notes
 	for notes in pedNotes:
 		seq.addNote(notes['p'],notes['v'],notes['st'], songCounter, channel)
+	return None
+
+
+
+def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
+	#ASSERT isinstance(seq, NoteSequence())
+	#ASSERT (maxTime + maxNotes > 0) and (maxTime == 0 xor maxNotes == 0)
+	#ASSERT 0 <= channel <= 15
+	#ASSERT 0 <= voice <= 127
+	#generates notes and writes to seq for given channel and MIDI program
+	#generates until written maxNotes-many notes or elapse maxTime-many ticks
+	#returns sequence of (meaningful) hexagrams used to generate sequence
+	
+
+	hexSequence = []
+
+	cNote = {'cP':0,'cV':0,'cArt':Articulations.NORMAL,'cSt':0}
+
+	#start our initial note; init. pitch & vol := 29 + random.randrange(64)
+	#which gives a uniform distribution from F1 to G#4 centered on middle C
+	for i in range(2):
+		hexSequence.append(randomHexagram())
+
+	cNote['cP'] = 29 + hexSequence[0]['hexagram']
+	cNote['cV'] = 29 + hexSequence[1]['hexagram']
+
+	bDesc = f'Channel {channel:>2}'
+
+	with tqdm(total=max(maxTime,maxNotes),desc=bDesc) as pbar:
+		_generateNotes(pbar,seq,hexSequence,cNote,maxTime,maxNotes,channel,\
+					   voice)
 
 	return hexSequence
 
 
 
+def setupParser():
+	rSeed = random.randrange(sys.maxsize)
+
+	p = argparse.ArgumentParser(prog='./midi_of_changes.py',epilog=\
+		'\"Imagine, A sound being \'better!\'\" —John Cage (1912-1992)', \
+		description='''\
+		Generates a MIDI file using chance operations derived from hexagrams 
+		specified in the Book of Changes, 《易经》 (often rendered as 
+		"I Ching" in English). Inspired by John Cage's use of hexagrams in 
+		composing. The first complete piece composed by Cage in this manner 
+		was Music of Changes in 1951.\
+		''')
+	p.add_argument('-l', '--length', required=True, type=int, help='''\
+		int: sets how long the generated midi track will be. Use --units or 
+		-u to specify length in seconds, MIDI ticks, or notes. min: 1
+		''')
+	p.add_argument('-u', '--units', type=str, default='s', \
+		choices=('s','sec','t','ticks','n','notes'), help='''\
+		str: sets the units for argument -l or --length. Use "s" or "sec" for 
+		lengths given in seconds, "t" or "ticks" for lengths given in MIDI 
+		ticks, or "n" or "notes" for generating a fixed number of notes per 
+		channel. default: "s"\
+		''')
+	p.add_argument('-t', '--tempo', type=int, default=12, help='''\
+		int: sets how frequently a new note is played. On average, a new note 
+		occurs every (13.3/t) seconds. min:1, max:32767, default: 12\
+		''')
+	p.add_argument('-s', '--seed', type=int, default=rSeed, \
+				   help=f'''\
+		int: sets the seed for the random number generator. min: 0, max: 
+		{sys.maxsize}, default: random\
+		''')
+	p.add_argument('-p', '--program', nargs='+', type=int, default=[1], \
+		help='''\
+		int(s): takes up to 16 integers specifying the MIDI program to use 
+		for each channel. min:1, max:128, default: 1\
+		''')
+
+	return p
+
+
+
+def validateArgs(args):
+	prog = './midi_of_changes.py'
+	#confirms arguments given are within reasonable bounds
+	if(args.length <= 0):
+		raise ValueError(f'{prog}: error: argument -l/--length: out of range \
+value: {args.length} (choose a number greater than zero)')
+
+	if(len(args.program) > 16):
+		raise ValueError(f'{prog}: error: argument -p/--program: too many \
+programs specified: {args.program} (argument takes no more \
+than 16 values)')
+
+	for p in range(len(args.program)):
+		if (args.program[p] < 1 or args.program[p] > 128):
+			raise ValueError(f'{prog}: error: argument -p/--program: out of \
+range value: {args.program[p]} at position {p} (choose numbers in 1 — 128)')
+
+	if(args.tempo <= 0 or args.tempo > 32767):
+		raise ValueError(f'{prog}: error: argument -t/--tempo: out of range \
+value: {args.tempo} (choose a number in 1 — 32767)')
+
+	if(args.seed < 0 or args.seed > sys.maxsize):
+		raise ValueError(f'{prog}: error: argument -s/--seed: out of range \
+value: {args.seed} (choose number in 0 — {sys.maxsize})')
+
+	return None
+
+
 
 def main():
-	#setup variables
-	version = '0.1.0'
-	seed = 128 #random.randrange(sys.maxsize)
-	length = 8
-	voices = [0, 0]
-	tpq = 12 #ticks per quarter note. 1 quarter note = 0.5s (@120bpm)
-			 #time per tick (seconds) = 1m/120b*60s/1m*1b/tpq = 1/(2*tpq) sec
 
-	#housekeeping
+	#argument parsing
+	parser = setupParser()
+	args = parser.parse_args()
+	validateArgs(args)
+
+	print(r'''
+ +--------------------------------------------------------------------+
+ ] 8. .8 "8@8" @@:. "8@8"       .8:   .8@8  8                         [
+ ] @8.8@   @   @ "8   @         8 "   8  "8 8                         [
+ ] @ 8 @   @   @  @   @    .8. 8@8    @     @8:. :":  8:. .:: :": .": [
+ ] @ " @   @   @ .8   @    8 8  8     8  .8 8 "8 .:8  8 8 8 8 8:" "*. [
+ ] @   @ .8@8. 8@:" .8@8.  "8"  8     "8@8  8  8 ".8. 8 8 ":8 ".: :." [
+ +--------------------------------------------------------. 8---------+
+                                                          ":"
+	''')
+
+	#turn arguments into variables
+	seed = args.seed #random.randrange(sys.maxsize)
 	random.seed(seed)
+	tpq = args.tempo
+		#ticks per quarter note. 1 quarter note = 0.5s (@120bpm)
+		#time per tick (seconds) = 1m/120b*60s/1m*1b/tpq = 1/(2*tpq) sec
+		#mido cannot change tempo from 120bpm
+
+	voices = [] 
+	#MIDI program lists are usually 1-indexed; turn into 0-indexed entries
+	for p in args.program:
+		voices.append(p-1)
+
+	#determine length depending on units given by user
+	if (args.units == 's' or args.units == 'sec'):
+		mNotes = 0
+		length = 2 * args.length * tpq #seconds into MIDI ticks @120bpm
+		fileNameUnits = 't' #filenames are never in terms of seconds
+	
+	elif (args.units == 't' or args.units == 'ticks'):
+		mNotes = 0
+		length = args.length
+		fileNameUnits = 't'
+	
+	else:
+		mNotes = args.length
+		length = 0
+		fileNameUnits = 'n'
+
+
+	#setup variables and housekeeping
+	version = '1.0.0'
+	usedHexagrams = []
 	output = mido.MidiFile(type = 0,ticks_per_beat=tpq)
 	song = output.add_track()
 	rawNotes = NoteSequence()
@@ -372,21 +539,48 @@ def main():
 	for i in range(len(voices)):
 		song.append(mido.Message('program_change',channel=i,program=voices[i]))
 
+	if mNotes > 0:
+		print(f'Generating a song with {len(voices)} voices \
+for {mNotes} note(s)...')
+	else:
+		print(f'Generating a song with {len(voices)} voices \
+for {int(length/2/tpq)} second(s)...')
+
+
 	for j in range(len(voices)):
-		generateVoice(rawNotes, maxNotes = length, channel=j, voice=voices[j])
+		usedHexagrams.extend(generateVoice(rawNotes, maxTime = length, \
+			maxNotes = mNotes, channel=j, voice=voices[j]))
 
-	messages = rawNotes.generateMessages()
+	print(f'\nWriting file...')
+	midiMessages = rawNotes.generateMessages()
 
-	for m in messages:
+	for m in midiMessages:
 		song.append(m)
 
-	fileN = f"{version}_{seed}_{tpq}_{length}"
+	song.append(mido.MetaMessage('end_of_track'))
+
+	#get path of script so we can save to ./out/
+	outPath = os.path.dirname(__file__)
+	outPath += '/out/'
+	#generate output subfolder if it does not yet exist
+	if not os.path.isdir(outPath):
+		os.makedirs(outPath)
+
+	#generate filename based on arguments
+	#Two filenames will be equal iff the output should be exactly the same
+	fileN = f"v{version}_seed {seed}_tempo {tpq}_"
+	if (fileNameUnits == 'n'):
+		fileN += f"length {mNotes}n_"
+	else:
+		fileN += f"length {length}t_"
+	fileN += f"programs"
 	for v in voices:
-		fileN += f"_{v}"
+		fileN += f" {v}"
 	fileN += f".mid"
 
-	print(f"\nSaving to: {fileN}")
-	output.save(filename = fileN)
+
+	print(f"\nSaving to:\n{outPath+fileN}")
+	output.save(filename = outPath+fileN)
 
 	return 0
 
