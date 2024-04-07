@@ -555,7 +555,7 @@ def main():
 
 
 	#setup variables and housekeeping
-	version = '1.0.1'
+	version = '1.0.2'
 	usedHexagrams = []
 	output = mido.MidiFile(type = 0,ticks_per_beat=tpq)
 	song = output.add_track()
@@ -616,7 +616,7 @@ for {int(length/2/tpq)} second(s)...')
 		fileN += f"length {length}t_"
 	fileN += f"programs"
 	for v in voices:
-		fileN += f" {v}"
+		fileN += f" {v+1}"
 	fileN += f".mid"
 
 	if(not args.quiet):
