@@ -15,9 +15,9 @@ class MsgPriority(IntEnum):
 	NOTE_OFF, NOTE_ON = range(2)
 
 class NoteSequence:
-	def __init__(self):
+	def __init__(self, quiet = False):
 		self.seq = []
-		
+		self._silent = quiet #turns off progress bars inside class
 		return None
 
 
@@ -64,7 +64,8 @@ class NoteSequence:
 		messages = []
 		out = []
 
-		with tqdm(total=len(self.seq),desc='Converting') as pbar:
+		with tqdm(total=len(self.seq),disable=self._silent, \
+				  desc='Converting') as pbar:
 			for i in self.seq:
 				#skip 0-length notes
 				if(i['start'] != i['end']):
@@ -83,7 +84,8 @@ than maximum delta time allowable by MIDI 1.0 Standards: \
 		messages.sort(key=operator.itemgetter('absTime','priority'))
 		prevTime = 0
 
-		with tqdm(total=len(messages),desc='Writing   ') as pbar:
+		with tqdm(total=len(messages),disable=self._silent,\
+				  desc='Writing   ') as pbar:
 			for a in messages:
 				d = a['data']
 				dTime = a['absTime'] - prevTime
@@ -120,7 +122,7 @@ def kingWenToBin(wen):
 
 
 
-def toCharacter(h, kingWen = True):
+def toCharacter(h):
 	#h is a hexagram dict
 	#returns simplified chinese characters(s) associated w/ each hexagram
 
@@ -139,6 +141,21 @@ def uHexagram(h):
 	#(eg. '䷀' for 63 [1 in King Wen sequence])
 
 	return chr(0x4dbf + h['wen'])
+
+
+
+def printHexagrams(hexSeq):
+	#hexSeq is a iterable of hexagram dict
+	hexString = ''	#UTF-8 hexagrams
+	jianti = ''		#UTF-8 simplified characters
+
+	for h in hexSeq:
+		hexString += f'{uHexagram(h)} '
+		jianti += toCharacter(h)
+
+	print(f'\nYijing Hexagrams:\n{hexString[:-1]}\n\nNames:\n{jianti}')
+
+	return None
 
 
 
@@ -332,7 +349,7 @@ def _generateNotes(pbar, seq, hexs, cNote, maxTime=0, maxNotes=0, channel=0,\
 			genNewNote = False
 			prevArt = cNote['cArt']
 
-			hexs.append(generateNote(cNote))
+			hexs.extend(generateNote(cNote))
 
 			#if we let go of pedal, end all pedal notes now and clear list
 			if(prevArt == Articulations.PEDAL and prevArt != cNote['cArt']):
@@ -402,7 +419,8 @@ def generateVoice(seq, maxTime=0, maxNotes=0, channel=0, voice=0):
 
 	bDesc = f'Channel {channel:>2}'
 
-	with tqdm(total=max(maxTime,maxNotes),desc=bDesc) as pbar:
+	with tqdm(total=max(maxTime,maxNotes),disable=seq._silent,\
+			  desc=bDesc) as pbar:
 		_generateNotes(pbar,seq,hexSequence,cNote,maxTime,maxNotes,channel,\
 					   voice)
 
@@ -447,6 +465,12 @@ def setupParser():
 		int(s): takes up to 15 integers specifying the MIDI program to use 
 		for each channel. min:1, max:128, default: 1\
 		''')
+	p.add_argument('--hexagram', action='store_true', help='''\
+		include this flag to print all hexagrams used in MIDI generation
+		''')
+	p.add_argument('--quiet', action='store_true', help='''\
+		silences all output. does not override --hexagram flag
+		''')
 
 	return p
 
@@ -488,7 +512,8 @@ def main():
 	args = parser.parse_args()
 	validateArgs(args)
 
-	print(r'''
+	if (not args.quiet):
+		print(r'''
  +--------------------------------------------------------------------+
  ] 8. .8 "8@8" @@:. "8@8"       .8:   .8@8  8                         [
  ] @8.8@   @   @ "8   @         8 "   8  "8 8                         [
@@ -497,7 +522,7 @@ def main():
  ] @   @ .8@8. 8@:" .8@8.  "8"  8     "8@8  8  8 ".8. 8 8 ":8 ".: :." [
  +--------------------------------------------------------. 8---------+
                                                           ":"
-	''')
+		''')
 
 	#turn arguments into variables
 	seed = args.seed #random.randrange(sys.maxsize)
@@ -534,7 +559,7 @@ def main():
 	usedHexagrams = []
 	output = mido.MidiFile(type = 0,ticks_per_beat=tpq)
 	song = output.add_track()
-	rawNotes = NoteSequence()
+	rawNotes = NoteSequence(args.quiet)
 
 	#skip channel 9. it only does percussion
 	if(len(voices) >= 10):
@@ -549,12 +574,12 @@ def main():
 			v = voices[i]
 		song.append(mido.Message('program_change',channel=i,program=v))
 
-	
-	if mNotes > 0:
-		print(f'Generating a song with {len(voices)} voices \
+	if(not args.quiet):
+		if(mNotes > 0):
+			print(f'Generating a song with {len(voices)} voices \
 for {mNotes} note(s)...')
-	else:
-		print(f'Generating a song with {len(voices)} voices \
+		else:
+			print(f'Generating a song with {len(voices)} voices \
 for {int(length/2/tpq)} second(s)...')
 
 	#skip channel 9
@@ -566,7 +591,8 @@ for {int(length/2/tpq)} second(s)...')
 		usedHexagrams.extend(generateVoice(rawNotes, maxTime = length, \
 			maxNotes = mNotes, channel=j, voice=v))
 
-	print(f'\nWriting file...')
+	if(not args.quiet):
+		print(f'\nWriting file...')
 	midiMessages = rawNotes.generateMessages()
 
 	for m in midiMessages:
@@ -593,9 +619,12 @@ for {int(length/2/tpq)} second(s)...')
 		fileN += f" {v}"
 	fileN += f".mid"
 
-
-	print(f"\nSaving to:\n{outPath+fileN}")
+	if(not args.quiet):
+		print(f"\nSaving to:\n{outPath+fileN}")
 	output.save(filename = outPath+fileN)
+
+	if(args.hexagram):
+		printHexagrams(usedHexagrams)
 
 	return 0
 
